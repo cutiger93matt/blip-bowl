@@ -39,6 +39,8 @@ body{background:var(--bg);font:16px/1.4 system-ui,-apple-system,sans-serif;overf
 .wins{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:6px}
 .wins div{background:#0d0303;border:2px solid #000;border-radius:4px;height:40px;display:flex;align-items:center;justify-content:center;
   font:30px/1 VT323,ui-monospace,monospace;color:var(--led);text-shadow:0 0 7px rgba(255,43,34,.8);white-space:nowrap;box-shadow:inset 0 0 10px rgba(0,0,0,.9)}
+.stats{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 6px;margin-top:-4px;color:#9aa4a8;font:700 11px/1 system-ui,sans-serif;letter-spacing:.04em;white-space:nowrap}
+.stats b{font:22px/1 VT323,ui-monospace,monospace;color:var(--led);text-shadow:0 0 6px rgba(255,43,34,.7);margin-left:4px;vertical-align:-3px}
 .led{height:26px;display:flex;align-items:center;justify-content:center;
   font:22px/1 VT323,ui-monospace,monospace;color:#ff7a6e;text-shadow:0 0 6px rgba(255,43,34,.6);
   white-space:nowrap;overflow:hidden;letter-spacing:.06em;margin-top:-4px}
@@ -87,6 +89,7 @@ body{background:var(--bg);font:16px/1.4 system-ui,-apple-system,sans-serif;overf
     <div class="wins"><div id="w1"></div><div id="w2"></div><div id="w3"></div></div>
     <div class="lbl bot"><span>HOME</span><span id="tl">TIME REMAINING</span><span>VISITOR</span></div>
   </div>
+  <div class="stats"><span>TOTAL YARDS</span><span>HOME <b id="hy">0</b></span><span>VISITOR <b id="vy">0</b></span></div>
   <div class="led" id="led">PRESS ► TO KICK OFF</div>
   <div class="stadium"><div class="turf">
     <div class="field" id="field"></div>
@@ -120,7 +123,7 @@ const store={get(k,d){try{const v=localStorage.getItem('bb_'+k);return v==null?d
 
 const S={phase:'title',home:0,vis:0,q:1,clock:QLEN,down:1,toGo:10,ball:25,los:25,
   r:{x:25,l:1},defs:[],view:23,pro:store.get('pro',1),sound:store.get('sound',true),
-  msg:'PRESS ► TO KICK OFF',msgUntil:Infinity,scUntil:0,liveStart:0,tackler:-1,kick:null,cpu:null};
+  msg:'PRESS ► TO KICK OFF',msgUntil:Infinity,scUntil:0,hy:0,vy:0,liveStart:0,tackler:-1,kick:null,cpu:null};
 let gen=0, liveTimer=null, animTimer=null;
 const later=(fn,ms)=>{const g=gen;setTimeout(()=>{if(g===gen)fn()},ms)};
 
@@ -163,6 +166,7 @@ function render(now){
   let w;
   if(mode==='st'){const tg=S.ball+S.toGo>=100?'G':S.toGo;w=[S.down,fpos(S.ball),tg]}
   else w=[S.home,mmss(S.clock),S.vis];
+  $('hy').textContent=S.hy;$('vy').textContent=S.vy;
   $('w1').textContent=w[0];$('w2').textContent=w[1];$('w3').textContent=w[2];
   $('tl').textContent=S.phase==='over'?'FINAL':'TIME REMAINING  Q'+S.q;
   let led;
@@ -195,7 +199,7 @@ requestAnimationFrame(render);
 
 /* ---------- game flow ---------- */
 function newGame(){gen++;clearInterval(liveTimer);clearInterval(animTimer);
-  Object.assign(S,{home:0,vis:0,q:1,clock:QLEN});
+  Object.assign(S,{home:0,vis:0,q:1,clock:QLEN,hy:0,vy:0});
   sfx.whistle();setMsg('KICKOFF!',1400);later(()=>startDrive(rnd(20,32)),1200)}
 
 function startDrive(spot){S.ball=Math.max(1,Math.min(99,spot));S.down=1;S.toGo=Math.min(10,100-S.ball);
@@ -260,7 +264,7 @@ function nextAfter(fn){
     else{setMsg('END OF Q'+ended,1600);later(fn,1600)}},300)}
 
 function tackle(){endPlay();S.phase='dead';sfx.tackle();
-  const gain=S.r.x-S.los;S.ball=S.r.x;
+  const gain=S.r.x-S.los;S.ball=S.r.x;S.hy+=gain;
   if(S.ball<=0){setMsg('SAFETY!',2200);S.vis+=2;later(()=>nextAfter(()=>cpuDrive(rnd(30,45))),2200);return}
   if(gain>=S.toGo){setMsg(`TACKLED ${gain>0?'+':''}${gain}  1ST DOWN`,1800);S.down=1;S.toGo=Math.min(10,100-S.ball);later(sfx.first,250);
     later(()=>nextAfter(setupPlay),1800);return}
@@ -268,7 +272,7 @@ function tackle(){endPlay();S.phase='dead';sfx.tackle();
   if(S.down>4){setMsg('TURNOVER ON DOWNS',2200);later(()=>nextAfter(()=>cpuDrive(100-S.ball)),2200);return}
   setMsg(`TACKLED ${gain>0?'+':''}${gain}`,1600);later(()=>nextAfter(setupPlay),1600)}
 
-function touchdown(){endPlay();S.phase='dead';S.home+=7;S.scUntil=performance.now()+2600;sfx.td();setMsg('TOUCHDOWN!',2600);
+function touchdown(){endPlay();S.hy+=100-S.los;S.phase='dead';S.home+=7;S.scUntil=performance.now()+2600;sfx.td();setMsg('TOUCHDOWN!',2600);
   later(()=>nextAfter(()=>cpuDrive(rnd(20,35))),2600)}
 
 function kick(){
@@ -297,11 +301,12 @@ function cpuDrive(start){S.phase='cpu';
   later(()=>{clearInterval(animTimer);S.cpu=null;
     const boost=S.pro===2?.1:0,pTD=.14+start/100*.32+boost,pFG=.22,pTO=.1;
     const roll=Math.random();S.clock-=rnd(110,280);
-    let txt,next;
-    if(roll<pTD){S.vis+=7;sfx.bad();txt='VISITOR TOUCHDOWN';next=rnd(20,35)}
-    else if(roll<pTD+pFG){S.vis+=3;sfx.bad();txt='VISITOR FIELD GOAL';next=rnd(20,32)}
-    else if(roll<pTD+pFG+pTO){sfx.good();txt='INTERCEPTED!';next=rnd(30,55)}
-    else{sfx.first();txt='VISITOR PUNTS';next=rnd(10,35)}
+    let txt,next,yds;const room=100-start;
+    if(roll<pTD){S.vis+=7;sfx.bad();txt='VISITOR TOUCHDOWN';next=rnd(20,35);yds=room}
+    else if(roll<pTD+pFG){S.vis+=3;sfx.bad();txt='VISITOR FIELD GOAL';next=rnd(20,32);yds=Math.max(0,room-rnd(12,32))}
+    else if(roll<pTD+pFG+pTO){sfx.good();txt='INTERCEPTED!';next=rnd(30,55);yds=Math.min(room,rnd(0,30))}
+    else{sfx.first();txt='VISITOR PUNTS';next=rnd(10,35);yds=Math.min(room,rnd(3,35))}
+    S.vy+=yds;txt+=`  ${yds} YDS`;
     S.phase='dead';S.r.x=-999;S.defs=[];setMsg(txt,2200);
     later(()=>nextAfter(()=>startDrive(next)),2200)},3000)}
 
@@ -310,7 +315,7 @@ function gameOver(){S.phase='over';S.clock=0;clearInterval(liveTimer);clearInter
   let res;if(S.home>S.vis){rec.w++;res='YOU WIN!'}else if(S.home<S.vis){rec.l++;res='YOU LOSE'}else{rec.t++;res='TIE GAME'}
   store.set('rec',rec);showRec();
   S.home>S.vis?sfx.td():sfx.bad();
-  S.msg=`${res}  ${S.home}-${S.vis}`;S.msgUntil=0;
+  S.msg=`${res}  ${S.home}-${S.vis}`;S.scUntil=0;S.msgUntil=0;
   later(()=>{if(S.phase==='over')S.msg='PRESS ► TO PLAY AGAIN'},4000)}
 
 function showRec(){const r=store.get('rec',null);if(r)$('rec').textContent=`Your record: ${r.w}-${r.l}-${r.t} (W-L-T). ► runs, ▲▼ change lanes, K kicks.`}
